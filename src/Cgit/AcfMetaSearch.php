@@ -23,29 +23,28 @@ class AcfMetaSearch
      *
      * @var array
      */
-    private $searchable_fields = [];
+    public static $searchable_fields = [];
 
     /**
      * Searchable meta_key values.
      *
      * @var array
      */
-    private $meta_keys = [];
+    public static $meta_keys = [];
 
     /**
      * Constructor.
-     *
-     * @return void
      */
     private function __construct()
     {
         $this->buildFieldList();
         $this->buildMetaKeyList();
+        $this->checkSearch();
         $this->applyFilters();
     }
 
     /**
-     * Return instance
+     * Return instance.
      *
      * return Cgit\AcfMetaSearch
      */
@@ -59,9 +58,7 @@ class AcfMetaSearch
     }
 
     /**
-     * Build a list of all searchable fields.
-     *
-     * @return void
+     * Build a list of all searchable fields from ACF.
      */
     private function buildFieldList()
     {
@@ -74,7 +71,7 @@ class AcfMetaSearch
         $this->fields = acf_local()->fields;
 
         // Filter down to searchable fields only.
-        $this->searchable_fields = array_filter(
+        self::$searchable_fields = array_filter(
             $this->fields,
             function ($a) {
                 return isset($a['searchable']) && $a['searchable'];
@@ -98,16 +95,16 @@ class AcfMetaSearch
     private function buildMetaKeyList()
     {
         // Build the regular expressions for each field.
-        foreach ($this->searchable_fields as $key => $field) {
-            $this->searchable_fields[$key]['regex'] = '^'.$this->getMetaKeyRegex($field) . '$';
+        foreach (self::$searchable_fields as $key => $field) {
+            self::$searchable_fields[$key]['regex'] = '^'.$this->getMetaKeyRegex($field) . '$';
         }
 
-        //Find a true list of all available searchable meta_key values.
+        // Find a true list of all available searchable meta_key values.
         global $wpdb;
 
         $sql = "SELECT DISTINCT meta_key FROM " . $wpdb->prefix . "postmeta WHERE ";
 
-        foreach ($this->searchable_fields as $field) {
+        foreach (self::$searchable_fields as $field) {
             $sql.= "meta_key REGEXP '" . $field['regex'] . "' OR ";
         }
 
@@ -116,7 +113,7 @@ class AcfMetaSearch
         $results = $wpdb->get_results($sql);
 
         // Take the query results and populate an of searchable meta_keys
-        $this->meta_keys = array_map(
+        self::$meta_keys = array_map(
             function ($a) {
                 return $a->meta_key;
             },
@@ -126,61 +123,148 @@ class AcfMetaSearch
 
     /**
      * Applies any necessary filters.
-     *
-     * @return void
      */
     private function applyFilters()
     {
-        $this->filterSearchQuery();
-        $this->filterMetaWhere();
+        $this->filterDistinct();
+        $this->filterMetaJoin();
+        $this->filterSearch();
     }
 
     /**
-     * Filters the WordPress search query to include meta_values.
+     * Filters the search query DISTINCT segment. The customised search results
+     * in duplicate IDs in the results so DISTINCT must be set.
+     */
+    private function filterDistinct()
+    {
+        add_filter(
+            'posts_distinct',
+            function ($sql) {
+                if ($this->is_search) {
+                    if (empty($sql)) {
+                        return " DISTINCT ";
+                    }
+                }
+                return $sql;
+            }
+        );
+    }
+
+    /**
+     * Filter the query to add a join to the post_meta table.
+     */
+    private function filterMetaJoin()
+    {
+        add_filter(
+            'posts_join_paged',
+            function ($sql) {
+                if ($this->is_search) {
+                    return $sql." INNER JOIN plbl_postmeta AcfMetaSearch ON ( plbl_posts.ID = AcfMetaSearch.post_id ) ";
+                }
+                return $sql;
+            }
+        );
+    }
+
+    /**
+     * Filter the search query SQL to include meta query matching.
      *
      * @return void
      */
-    private function filterSearchQuery()
+    private function filterSearch()
     {
-        $func = function ($query) {
-            if (!is_admin() && $query->is_search) {
-                $meta = ['relation' => 'OR'];
+        global $wpdb;
 
-                // Add each field
-                foreach ($this->meta_keys as $field) {
-                    $meta[] = [
-                        'key' => $field,
-                        'value' => $query->query_vars['s'],
-                        'compare' => 'LIKE',
-                        'type' => 'CHAR',
-                    ];
+        // Set the WordPress prefix.
+        $prefix = $wpdb->prefix;
+
+        // Placeholder used for swapping the search term during SQL query
+        // building.
+        $placeholder = 'AcfSearchPlaceholder-'.md5(microtime());
+
+        // Build an array of meta query SQL segments.
+        $where = [];
+        foreach (self::$meta_keys as $field) {
+            $temp = "AcfMetaSearch.meta_key = '".$field."' ";
+            $temp.= "AND CAST(AcfMetaSearch.meta_value AS CHAR) LIKE '%".$placeholder."%'";
+            $where[] = $temp;
+        }
+
+        // Filter the search query.
+        $func = function ($sql) use ($where, $prefix, $placeholder) {
+
+            // Check this query is a search.
+            if (!$this->is_search) {
+                return $sql;
+            }
+
+            // Extract the search terms from the SQL
+            $search_terms = $this->getSearchTermsFromSql($sql);
+
+            $new_sql = "AND \n";
+            $new_sql.= "(\n";
+
+            $i = 0;
+            $keyword_count = count($search_terms);
+
+            foreach ($search_terms as $keyword) {
+                $i++;
+
+                $new_sql.= "\t(\n";
+
+                foreach ($where as $meta) {
+                    $new_sql.= "\t\t(".str_replace($placeholder, $keyword, $meta).")\n";
+                    $new_sql.= "\t\tOR\n";
                 }
 
-                $query->set('meta_query', $meta);
+                $new_sql.= "\t\t(".$prefix."posts.post_excerpt LIKE '%".$keyword."%')\n\t\tOR\n";
+                $new_sql.= "\t\t(".$prefix."posts.post_content LIKE '%".$keyword."%')\n";
+                $new_sql.= "\t)\n";
+
+                if ($i != $keyword_count) {
+                    $new_sql.= "\tAND\n";
+                }
             }
 
-            return $query;
+            $new_sql.= ")\n";
+            $new_sql.= "AND\n";
+            $new_sql.= "(\n\t".$prefix."posts.post_password = ''\n)";
+
+            return $new_sql;
         };
 
-        add_filter('pre_get_posts', $func);
+        add_filter('posts_search', $func);
     }
 
     /**
-     * Filters the search meta query SQL to change the 'AND' clause into an 'OR'
-     * clause. By default any meta query is appended using 'AND'.
+     * Accepts the original WordPress search SQL WHERE clause and extracts the
+     * search terms.
      *
-     * @return void
+     * @param string $sql
+     *
+     * @return array
      */
-    private function filterMetaWhere()
+    private function getSearchTermsFromSql($sql)
     {
-        $func = function ($sql) {
-            if (is_search()) {
-                $sql['where'] = preg_replace('/^\s+AND\s+/', ' OR ', $sql['where']);
-            }
-            return $sql;
-        };
+        // Extract the search term as already used by WordPress in its SQL.
+        $preg = preg_match_all('/\'\%([^\%]*)\%\'/', $sql, $matches);
 
-        add_filter('get_meta_sql', $func);
+        return array_unique(end($matches));
+    }
+
+    /**
+     * Checks if a query is a search. The plugin filters many other segments
+     * of queries in their later stages, which should only happen after a check
+     * that the query is actually a search query.
+     */
+    private function checkSearch()
+    {
+        add_filter(
+            'pre_get_posts',
+            function ($query) {
+                $this->is_search = $query->is_search();
+            }
+        );
     }
 
     /**
@@ -200,5 +284,84 @@ class AcfMetaSearch
         } else {
             return $field['key'];
         }
+    }
+
+    /**
+     * The search excerpt returns a suitable excerpt for a given page, based on
+     * searchable custom meta values. Text based fields are stitched together into
+     * one string, starting with the largest field which includes the search term.
+     * The excerpt is trimmed to the $length, without stopping in the middle of a
+     * word.
+     *
+     * @param  int $post_id
+     * @param  string $excerpt Original excerpt
+     * @param  string $end
+     * @param  int $length
+     * @return string
+     */
+    public static function excerpt($post_id, $excerpt, $end = '...', $length = 250)
+    {
+        // Requires the acf function get_fields();
+        if (!function_exists('get_fields')) {
+            return '';
+        }
+
+        // Get available fields for this post.
+        $fields_available = get_fields($post_id);
+
+        // Ensure it is an array.
+        $fields_available = is_array($fields_available) ? $fields_available : [];
+
+        // Get searchable fields.
+        $fields_searchable = array_keys(self::$searchable_fields);
+
+        // Final fields to include in the excerpt.
+        $fields = [];
+
+        // Reduce fields to searchable only.
+        foreach ($fields_available as $key => $field) {
+            if (in_array($key, $fields_searchable)) {
+                $fields[$key] = $field;
+            }
+        }
+
+        // Store matches with the search term.
+        $field_hits = [];
+
+        // Find matches.
+        foreach ($fields as $key => $field) {
+            if (is_string($field) && stristr($field, get_search_query())) {
+                $field_hits[$key] = strlen($field);
+            } else {
+                $field_hits[$key] = 0;
+            }
+        }
+
+        if ($fields) {
+            // Move the biggest hit to the front of the array.
+            while (reset($fields) !== max($fields)) {
+                $keys = array_keys($fields);
+                $val = $fields[$keys[0]];
+
+                unset($fields[$keys[0]]);
+                $fields[$keys[0]] = $val;
+            }
+        }
+
+        // Add the original excerpt.
+        $fields['_cgit_wp_acf_meta_search_excerpt'] = $excerpt;
+
+        $new_excerpt = '';
+        foreach ($fields as $field) {
+            $new_excerpt.= ' '.strip_tags($field);
+            $new_excerpt = trim($new_excerpt, '\t\n\r\0\x0B.');
+        }
+
+        // Find the first end of word after a given $length.
+        if (preg_match('/^.{1,'. $length .'}\b/s', $new_excerpt, $match)) {
+            return trim($match[0], '\t\n\r\0\x0B.').$end;
+        }
+
+        return '';
     }
 }
