@@ -158,8 +158,12 @@ class AcfMetaSearch
         add_filter(
             'posts_join_paged',
             function ($sql) {
+                global $wpdb;
+
                 if ($this->is_search) {
-                    return $sql." INNER JOIN plbl_postmeta AcfMetaSearch ON ( plbl_posts.ID = AcfMetaSearch.post_id ) ";
+                    return $sql . ' INNER JOIN ' . $wpdb->prefix
+                        . 'postmeta AcfMetaSearch ON (' . $wpdb->prefix
+                        . 'posts.ID = AcfMetaSearch.post_id)';
                 }
                 return $sql;
             }
