@@ -202,8 +202,13 @@ class AcfMetaSearch
                 return $sql;
             }
 
-            // Extract the search terms from the SQL
+            // Extract the search terms from the SQL.
             $search_terms = $this->getSearchTermsFromSql($sql);
+
+            // Abort if there are no search terms.
+            if (!count($search_terms)) {
+                return $sql;
+            }
 
             $new_sql = "AND \n";
             $new_sql.= "(\n";
