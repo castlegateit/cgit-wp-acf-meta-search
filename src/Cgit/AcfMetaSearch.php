@@ -256,7 +256,7 @@ class AcfMetaSearch
     private function getSearchTermsFromSql($sql)
     {
         // Extract the search term as already used by WordPress in its SQL.
-        $preg = preg_match_all('/\'\%([^\%]*)\%\'/', $sql, $matches);
+        $preg = preg_match_all('/\'(?:\%|\{[a-zA-Z0-9]+\})([^\%\{\}]*)(?:\{[a-zA-Z0-9]+\}|\%)\'/', $sql, $matches);
 
         return array_unique(end($matches));
     }
