@@ -62,13 +62,13 @@ class AcfMetaSearch
      */
     private function buildFieldList()
     {
-        // Ensure the ACF functions are available.
-        if (!function_exists('acf_local') || !isset(acf_local()->fields)) {
-            return;
+        // Ensure the ACF functions are available. Old ACF versions.
+        if (function_exists('acf_get_field_groups')) {
+            // Available fields.
+            foreach (acf_get_field_groups() as $group) {
+                 $this->fields = array_merge($this->fields, $this->getAcfFields($group['key']));
+            }
         }
-
-        // Available fields.
-        $this->fields = acf_local()->fields;
 
         // Filter down to searchable fields only.
         self::$searchable_fields = array_filter(
@@ -77,6 +77,29 @@ class AcfMetaSearch
                 return isset($a['searchable']) && $a['searchable'];
             }
         );
+    }
+
+
+    private function getAcfFields($parent_key)
+    {
+        $child_fields = acf_get_fields($parent_key);
+
+        $fields = [];
+        foreach ($child_fields as $k => $field) {
+            if (isset($field['sub_fields'])) {
+                foreach ($field['sub_fields'] as $sub) {
+                    $sub['parent_item'] = $field;
+                    $fields[] = $sub;
+                }
+                unset($field['sub_fields']);
+            }
+            $fields[$field['key']] = $field;
+        }
+
+        return array_filter($fields, function ($a) {
+            return isset($a['searchable']);
+        });
+
     }
 
     /**
@@ -104,15 +127,26 @@ class AcfMetaSearch
 
         $sql = "SELECT DISTINCT meta_key FROM " . $wpdb->prefix . "postmeta WHERE ";
 
+        // Get all regular expressions
+        $regular_expressions = [];
         foreach (self::$searchable_fields as $field) {
-            $sql.= "meta_key REGEXP '" . $field['regex'] . "' OR ";
+            $regular_expressions[] = $field['regex'];
+        }
+
+        // Remove duplicates and sort
+        $regular_expressions = array_unique($regular_expressions);
+        sort($regular_expressions);
+
+        foreach ($regular_expressions as $regex) {
+            $sql.= "meta_key REGEXP '" . $regex . "' OR ";
         }
 
         $sql = substr($sql, 0, -4);
 
         $results = $wpdb->get_results($sql);
 
-        // Take the query results and populate an of searchable meta_keys
+        // Take the query results and populate an array of searchable meta_keys
+        // which actually exist in the database.
         self::$meta_keys = array_map(
             function ($a) {
                 return $a->meta_key;
@@ -226,6 +260,7 @@ class AcfMetaSearch
                     $new_sql.= "\t\tOR\n";
                 }
 
+                $new_sql.= "\t\t(".$prefix."posts.post_title LIKE '%".$keyword."%')\n\t\tOR\n";
                 $new_sql.= "\t\t(".$prefix."posts.post_excerpt LIKE '%".$keyword."%')\n\t\tOR\n";
                 $new_sql.= "\t\t(".$prefix."posts.post_content LIKE '%".$keyword."%')\n";
                 $new_sql.= "\t)\n";
@@ -286,12 +321,12 @@ class AcfMetaSearch
      */
     private function getMetaKeyRegex($field)
     {
-        $parent = $field['parent'];
+        $parent = $field['parent_item']['key'];
 
         if (array_key_exists($parent, $this->fields) && $this->fields[$parent]['type'] == 'repeater') {
-            return $this->getMetaKeyRegex($this->fields[$parent]) . '_[0-9]+_' . $field['key'];
+            return $this->getMetaKeyRegex($this->fields[$parent]) . '_[0-9]+_' . $field['name'];
         } else {
-            return $field['key'];
+            return $field['name'];
         }
     }
 

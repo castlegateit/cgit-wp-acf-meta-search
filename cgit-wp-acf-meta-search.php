@@ -5,7 +5,7 @@
 Plugin Name: Castlegate IT WP ACF Custom Field Search
 Plugin URI: http://github.com/castlegateit/cgit-wp-dradis
 Description: Allows searching of custom fields and meta values.
-Version: 2.1.2
+Version: 3.0.0
 Author: Castlegate IT
 Author URI: http://www.castlegateit.co.uk/
 License: MIT
@@ -19,4 +19,4 @@ require __DIR__ . '/src/autoload.php';
 // Load plugin
 add_action('init', function () {
     AcfMetaSearch::getInstance();
-});
+}, 999);
