@@ -321,7 +321,10 @@ class AcfMetaSearch
      */
     private function getMetaKeyRegex($field)
     {
-        $parent = $field['parent_item']['key'];
+        $parent = null;
+        if (isset($field['parent_item']['key'])) {
+            $parent = $field['parent_item']['key'];
+        }
 
         if (array_key_exists($parent, $this->fields) && $this->fields[$parent]['type'] == 'repeater') {
             return $this->getMetaKeyRegex($this->fields[$parent]) . '_[0-9]+_' . $field['name'];
