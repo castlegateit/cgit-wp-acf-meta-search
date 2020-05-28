@@ -306,7 +306,7 @@ class AcfMetaSearch
         add_filter(
             'pre_get_posts',
             function ($query) {
-                $this->is_search = $query->is_search();
+                $this->is_search = ($query->is_search() && !is_admin());
             }
         );
     }
