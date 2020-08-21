@@ -38,7 +38,6 @@ class AcfMetaSearch
     private function __construct()
     {
         $this->buildFieldList();
-        $this->buildMetaKeyList();
         $this->checkSearch();
         $this->applyFilters();
     }
@@ -119,7 +118,7 @@ class AcfMetaSearch
     {
         // Build the regular expressions for each field.
         foreach (self::$searchable_fields as $key => $field) {
-            self::$searchable_fields[$key]['regex'] = '^'.$this->getMetaKeyRegex($field) . '$';
+            self::$searchable_fields[$key]['regex'] = $this->getMetaKeyRegex($field);
         }
 
         // Find a true list of all available searchable meta_key values.
@@ -138,7 +137,12 @@ class AcfMetaSearch
         sort($regular_expressions);
 
         foreach ($regular_expressions as $regex) {
-            $sql.= "meta_key REGEXP '" . $regex . "' OR ";
+            // Only use REGEXP where necessary
+            if (false === stristr($regex, '[0-9]')) {
+                $sql.= "meta_key = '" . $regex . "' OR ";
+            } else {
+                $sql.= "meta_key REGEXP '^" . $regex . "$' OR ";
+            }
         }
 
         $sql = substr($sql, 0, -4);
@@ -216,24 +220,29 @@ class AcfMetaSearch
         // Set the WordPress prefix.
         $prefix = $wpdb->prefix;
 
-        // Placeholder used for swapping the search term during SQL query
-        // building.
-        $placeholder = 'AcfSearchPlaceholder-'.md5(microtime());
-
-        // Build an array of meta query SQL segments.
-        $where = [];
-        foreach (self::$meta_keys as $field) {
-            $temp = "AcfMetaSearch.meta_key = '".$field."' ";
-            $temp.= "AND CAST(AcfMetaSearch.meta_value AS CHAR) LIKE '%".$placeholder."%'";
-            $where[] = $temp;
-        }
+        // To instance into method.
+        $that = $this;
 
         // Filter the search query.
-        $func = function ($sql) use ($where, $prefix, $placeholder) {
-
+        $func = function ($sql) use ($that, $prefix) {
             // Check this query is a search.
             if (!$this->is_search) {
                 return $sql;
+            }
+
+            // Build list of meta keys.
+            $that->buildMetaKeyList();
+
+            // Placeholder used for swapping the search term during SQL query
+            // building.
+            $placeholder = 'AcfSearchPlaceholder-'.md5(microtime());
+
+            // Build an array of meta query SQL segments.
+            $where = [];
+            foreach (self::$meta_keys as $field) {
+                $temp = "AcfMetaSearch.meta_key = '".$field."' ";
+                $temp.= "AND CAST(AcfMetaSearch.meta_value AS CHAR) LIKE '%".$placeholder."%'";
+                $where[] = $temp;
             }
 
             // Extract the search terms from the SQL.
