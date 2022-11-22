@@ -1,5 +1,9 @@
 # Castlegate IT WP ACF Meta Search
 
+**This plugin is no longer maintained. The [ACF Better Search](https://wordpress.org/plugins/acf-better-search/) plugin is now recommended instead.**
+
+***
+
 Adds support for searching meta values in the Advanced Custom Fields plugin. Fields can only searchable when registering custom field groups via PHP.
 
 # Usage
