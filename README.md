@@ -39,3 +39,7 @@ if (have_posts()) {
 # Notes
 
 When changing templates in ACF, custom field data remains for your old template's custom fields. This can have a side effect of showing irrelevant results if old data is stored but no longer displayed on the page.
+
+## License
+
+Released under the [MIT License](https://opensource.org/licenses/MIT). See [LICENSE](LICENSE) for details.
